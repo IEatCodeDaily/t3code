@@ -18,6 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -30,13 +31,13 @@ import { withoutContextHandoff } from "./ContextHandoffDelivery.ts";
 export { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
 
 // TextGenerationError's message names the operation; the user wants the provider's reason.
+const isTextGenerationError = Schema.is(TextGenerationError);
 const failureDetail = (error: unknown): string => {
-  const detail =
-    error instanceof TextGenerationError
-      ? error.detail
-      : error instanceof Error
-        ? error.message
-        : String(error);
+  const detail = isTextGenerationError(error)
+    ? error.detail
+    : error instanceof Error
+      ? error.message
+      : String(error);
   return detail.trim().slice(0, 500) || "Unknown error.";
 };
 
