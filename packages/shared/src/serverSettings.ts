@@ -68,6 +68,7 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
   "pi",
   "opencode",
   "antigravity",
+  "acpRegistry",
 ].map((driver) => ProviderDriverKind.make(driver));
 
 /** Only project-scoped callers may include configured instances when falling back; machine-level callers leave it unset. */
@@ -605,6 +606,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(patch.speechPostProcessingModelSelection !== undefined
       ? { speechPostProcessingModelSelection: patch.speechPostProcessingModelSelection }
+      : {}),
+    ...(patch.threadTitleModelSelection !== undefined
+      ? { threadTitleModelSelection: patch.threadTitleModelSelection }
       : {}),
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }

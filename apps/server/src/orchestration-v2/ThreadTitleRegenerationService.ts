@@ -8,6 +8,7 @@ import {
   type OrchestrationV2ConversationMessage,
   type RunId,
   type ServerSettingsError,
+  TextGenerationError,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -25,7 +26,23 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 import { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
+import { withoutContextHandoff } from "./ContextHandoffDelivery.ts";
 export { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
+
+// TextGenerationError's message names the operation; the user wants the provider's reason.
+const failureDetail = (error: unknown): string => {
+  const detail =
+    error instanceof TextGenerationError
+      ? error.detail
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  return detail.trim().slice(0, 500) || "Unknown error.";
+};
+
+type TitleOutcome =
+  | { readonly type: "stale" }
+  | { readonly type: "complete"; readonly title?: string; readonly failure?: string };
 
 export class ThreadTitleRegenerationService extends Context.Service<
   ThreadTitleRegenerationService,
@@ -57,6 +74,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly requestId: CommandId;
     readonly title?: string;
+    readonly failure?: string;
   }) =>
     threads
       .dispatch({
@@ -65,6 +83,7 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         requestId: input.requestId,
         ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.failure === undefined ? {} : { failure: input.failure }),
       })
       .pipe(Effect.asVoid);
 
@@ -110,12 +129,10 @@ const make = Effect.gen(function* () {
   const execute: ThreadTitleRegenerationService["Service"]["execute"] = Effect.fn(
     "ThreadTitleRegenerationService.execute",
   )(function* (input) {
-    const outcome:
-      | { readonly type: "stale" }
-      | { readonly type: "complete"; readonly title?: string } = yield* Effect.gen(function* () {
+    const outcome: TitleOutcome = yield* Effect.gen(function* () {
       const projection = yield* threads.getThreadRecords(
         input.threadId,
-        ["messages"],
+        ["messages", "providerThreads"],
         input.kind.type === "initial"
           ? { messageIds: [input.kind.messageId] }
           : { messageRoles: ["user", "assistant"] },
@@ -142,12 +159,16 @@ const make = Effect.gen(function* () {
           message === undefined
             ? { message: "", attachments: [] }
             : {
-                message: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
+                message: isAttachmentOnlyBootstrapPrompt(message.text)
+                  ? ""
+                  : withoutContextHandoff(message.text),
                 attachments: message.attachments,
               };
       } else {
         context = formatThreadTitleContext(
-          projection.messages.filter((message) => !message.streaming),
+          projection.messages
+            .filter((message) => !message.streaming)
+            .map((message) => ({ ...message, text: withoutContextHandoff(message.text) })),
         );
       }
       if (context.message.length === 0 && context.attachments.length === 0) {
@@ -162,6 +183,13 @@ const make = Effect.gen(function* () {
         yield* serverSettings.getSettings,
         projection.thread.projectId,
       ).settings;
+      const modelSelection = settings.threadTitleModelSelection ?? projection.thread.modelSelection;
+      // Forking the thread's own session keeps the provider's cached prefix warm.
+      const sourceSessionId = projection.providerThreads.find(
+        (providerThread) =>
+          providerThread.id === projection.thread.activeProviderThreadId &&
+          providerThread.providerInstanceId === modelSelection.instanceId,
+      )?.nativeThreadRef?.nativeId;
       // Storage cleanup removes worktrees but keeps the path; CLIs cannot spawn in a missing cwd.
       const worktreePath = projection.thread.worktreePath;
       const worktreeExists =
@@ -173,8 +201,9 @@ const make = Effect.gen(function* () {
         attachments: context.attachments,
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
         ...(inherited === undefined ? {} : { forkSource: inherited }),
+        ...(sourceSessionId == null ? {} : { sourceSessionId }),
         instructions: settings.threadTitleInstructions,
-        modelSelection: settings.textGenerationModelSelection,
+        modelSelection,
         projectId: projection.thread.projectId,
       });
       const generatedTitle = result.title.trim();
@@ -194,7 +223,12 @@ const make = Effect.gen(function* () {
               threadId: input.threadId,
               requestId: input.requestId,
               cause,
-            }).pipe(Effect.as({ type: "complete" as const })),
+            }).pipe(
+              Effect.as({
+                type: "complete" as const,
+                failure: failureDetail(Cause.squash(cause)),
+              }),
+            ),
       ),
     );
 
@@ -204,6 +238,7 @@ const make = Effect.gen(function* () {
     yield* complete({
       ...input,
       ...(outcome.title === undefined ? {} : { title: outcome.title }),
+      ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
     });
   });
 
