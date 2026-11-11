@@ -30,8 +30,8 @@ export const makeAcpRegistryTextGeneration = (
     readonly random: SecureRandom.SecureRandom["Service"];
   },
 ): ProviderTextGeneration => {
-  const run: TextGenerationOperations.Runner = (request) =>
-    Effect.gen(function* () {
+  const run: TextGenerationOperations.Runner = Effect.fn("AcpRegistryTextGeneration.run")(
+    function* (request) {
       const runtime = yield* makeAcpRegistryManagementRuntime({ ...input, cwd: request.cwd });
       const output = yield* Ref.make("");
       yield* runtime.handleSessionUpdate(({ update }) => {
@@ -74,31 +74,34 @@ export const makeAcpRegistryTextGeneration = (
         });
       }
       return yield* TextGenerationOperations.decodeJsonReply(request, "ACP agent", text);
-    }).pipe(
-      Effect.scoped,
-      Effect.timeoutOrElse({
-        duration: TIMEOUT,
-        orElse: () =>
-          Effect.fail(
-            new TextGenerationError({
-              operation: request.operation,
-              detail: "The ACP agent did not answer in time.",
-            }),
-          ),
-      }),
-      Effect.mapError((cause) =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
-              operation: request.operation,
-              detail: `ACP request failed: ${cause.message}`,
-              cause,
-            }),
+    },
+    (effect, request) =>
+      effect.pipe(
+        Effect.scoped,
+        Effect.timeoutOrElse({
+          duration: TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: request.operation,
+                detail: "The ACP agent did not answer in time.",
+              }),
+            ),
+        }),
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation: request.operation,
+                detail: `ACP request failed: ${cause.message}`,
+                cause,
+              }),
+        ),
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, services.catalog),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, services.spawner),
+        Effect.provideService(SecureRandom.SecureRandom, services.random),
       ),
-      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, services.catalog),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, services.spawner),
-      Effect.provideService(SecureRandom.SecureRandom, services.random),
-    );
+  );
   return TextGenerationOperations.fromRunner(
     "AcpRegistryTextGeneration",
     TextGenerationOperations.withoutInvestigation("ACP Registry", run),
