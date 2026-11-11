@@ -32,6 +32,8 @@ export interface Request<S extends Schema.Top> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /** Investigate cwd with read-only tools across turns; fail if the runner cannot guarantee read-only access. */
   readonly investigate?: { readonly timeoutMs: number } | undefined;
+  /** A native session the runner may fork instead of starting cold; runners that cannot fork ignore it. */
+  readonly sourceSessionId?: string | undefined;
 }
 
 const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
@@ -69,6 +71,19 @@ export const decodeJsonReply = <S extends Schema.Top>(
         }),
     ),
   );
+};
+
+export const generatedThreadTitle = (raw: string) => {
+  const title = sanitizeThreadTitle(raw);
+  // Some models echo the output schema's key instead of a title.
+  return title.toLowerCase() === "title"
+    ? Effect.fail(
+        new TextGenerationError({
+          operation: "generateThreadTitle",
+          detail: 'The model returned the placeholder title "title".',
+        }),
+      )
+    : Effect.succeed(title);
 };
 
 export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
@@ -142,6 +157,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       cwd: input.cwd,
       modelSelection: input.modelSelection,
       attachments: input.attachments,
+      sourceSessionId: input.sourceSessionId,
       ...buildThreadTitlePrompt({
         message: input.message,
         previousTitle: input.previousTitle,
@@ -152,7 +168,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       }),
     });
     return {
-      title: sanitizeThreadTitle(generated.title),
+      title: yield* generatedThreadTitle(generated.title),
       ...(generated.needsRefinement ? { needsRefinement: true } : {}),
     };
   });
