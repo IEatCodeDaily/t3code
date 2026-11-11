@@ -105,7 +105,8 @@ export const make = Effect.gen(function* () {
     );
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
-    // Only a failed probe counts: a pending one is also not installed yet. A disabled instance never runs.
+    // Only a failed probe counts: a pending one is also not installed yet.
+    // A disabled instance never runs.
     const unusable =
       textGeneratorCannotRun ||
       selected?.enabled === false ||

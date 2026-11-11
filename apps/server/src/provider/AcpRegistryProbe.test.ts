@@ -468,7 +468,11 @@ describe("ACP Registry probe", () => {
           }),
       });
       const textGeneration = makeAcpRegistryTextGeneration(
-        { instanceId, settings: decodeSettings({ agentId: "mock-agent" }), environment: process.env },
+        {
+          instanceId,
+          settings: decodeSettings({ agentId: "mock-agent" }),
+          environment: process.env,
+        },
         {
           catalog,
           spawner: yield* ChildProcessSpawner.ChildProcessSpawner,

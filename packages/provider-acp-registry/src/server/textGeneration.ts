@@ -10,7 +10,10 @@ import * as TextGenerationOperations from "@t3tools/provider-core/server/textGen
 import { findModelConfigOption } from "@t3tools/provider-acp/server/runtimeModel";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import { makeAcpRegistryManagementRuntime, type AcpRegistryConfigurationProbeInput } from "./probe.ts";
+import {
+  makeAcpRegistryManagementRuntime,
+  type AcpRegistryConfigurationProbeInput,
+} from "./probe.ts";
 
 const TIMEOUT = "3 minutes";
 const isTextGenerationError = Schema.is(TextGenerationError);

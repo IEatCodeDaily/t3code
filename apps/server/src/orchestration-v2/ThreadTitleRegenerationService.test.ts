@@ -570,7 +570,13 @@ describe("ThreadTitleRegenerationService", () => {
           threadId,
           runId: RunId.make("run:title:own:1"),
           ordinal: 1,
-          user: "Context handoff (full_thread_summary):\nFrom thread parent, runs 1-3.\n\nUser message:\nMigrate sessions to Postgres",
+          user: [
+            "Context handoff (full_thread_summary):",
+            "From thread parent, runs 1-3.",
+            "",
+            "User message:",
+            "Migrate sessions to Postgres",
+          ].join("\n"),
           assistant: "Done.",
         });
         const requestId = yield* armRegeneration({ command: "command:title:own:1", threadId });
