@@ -1,0 +1,132 @@
+name: Fork gates
+
+# Full-repo gates on GitHub-hosted runners; upstream CI needs Blacksmith runners this fork lacks.
+on:
+  push:
+    branches: ["ci/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Format, lint, knip
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/setup-ci-deps
+      - run: vp run --filter @t3tools/desktop ensure:electron
+      - run: vp run knip:check
+      - run: vp check
+
+  typecheck:
+    name: Typecheck (all packages)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/setup-ci-deps
+      - run: vp run --filter @t3tools/desktop ensure:electron
+      - run: vp run --concurrency-limit 1 --filter '*' --filter '!t3' typecheck
+      - name: Typecheck apps/server alone (largest project)
+        working-directory: apps/server
+        run: |
+          set +e
+          PATH="$PWD/node_modules/.bin:$PWD/../../node_modules/.bin:$PATH" /usr/bin/time -v effect-tsgo tsrs --noEmit > "$RUNNER_TEMP/tsc.log" 2> "$RUNNER_TEMP/time.log"
+          code=$?
+          grep -v "suggestion TS" "$RUNNER_TEMP/tsc.log" | grep -B1 -A3 " - error \|error TS" | head -200
+          grep -E "Maximum resident|Exit status|signal" "$RUNNER_TEMP/time.log"
+          echo "exit=$code"; exit $code
+
+  test_packages:
+    name: Tests (packages + desktop)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config xvfb
+      - uses: ./.github/actions/setup-ci-deps
+      - run: vp run --filter @t3tools/desktop ensure:electron
+      - run: vp run --parallel --concurrency-limit 2 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test
+
+  test_web:
+    name: Tests (web)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/setup-ci-deps
+      - run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
+      - run: vp run --filter @t3tools/web test
+
+  test_server:
+    name: Tests (server ${{ matrix.shard }}/8)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/setup-ci-deps
+      - run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+      - run: vp run test:cached -- --shard ${{ matrix.shard }}/8 apps/server
+
+  baseline:
+    name: Baseline on PR base (${{ matrix.check }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [server-typecheck, server-shard-1]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 4ae66e2e86deb303cc1728cece1b5a68f1073721
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/setup-ci-deps
+      - if: matrix.check == 'server-shard-1'
+        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+      - if: matrix.check == 'server-shard-1'
+        run: vp run test:cached -- --shard 1/8 apps/server
+      - if: matrix.check == 'server-typecheck'
+        working-directory: apps/server
+        run: |
+          set +e
+          PATH="$PWD/node_modules/.bin:$PWD/../../node_modules/.bin:$PATH" /usr/bin/time -v effect-tsgo tsrs --noEmit > "$RUNNER_TEMP/tsc.log" 2> "$RUNNER_TEMP/time.log"
+          code=$?
+          grep -v "suggestion TS" "$RUNNER_TEMP/tsc.log" | grep -B1 -A3 " - error \|error TS" | head -200
+          grep -E "Maximum resident|Exit status|signal" "$RUNNER_TEMP/time.log"
+          echo "exit=$code"; exit $code
